@@ -1,35 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { createReactTS } from '@/app/scripts/frontend/reactts'
-import { createReactJS } from '@/app/scripts/frontend/reactjs'
-import { createExpressTS } from '@/app/scripts/backend/expressts'
-import { createExpressJS } from '@/app/scripts/backend/expressjs'
-import { setupPrisma } from '@/app/scripts/orms/prismaSetup'
-import { createVueJS } from '@/app/scripts/frontend/vuejs'
-import { createVueTS } from '@/app/scripts/frontend/vuets'
-import { jwtAuthts , jwtAuthdjango} from '@/app/scripts/Auth/jwt'
+import { createReactTS } from '../../../../../packages/scripts/frontend/reactts'
+import { createReactJS } from '../../../../../packages/scripts/frontend/reactjs'
+import { createExpressTS } from '../../../../../packages/scripts/backend/expressts'
+import { createExpressJS } from '../../../../../packages/scripts/backend/expressjs'
+import { setupPrisma } from '../../../../../packages/scripts/orms/prismaSetup'
+import { createVueJS } from '../../../../../packages/scripts/frontend/vuejs'
+import { createNextJS } from '../../../../../packages/scripts/frontend/nextjs'
+import { createVueTS } from '../../../../../packages/scripts/frontend/vuets'
+import { jwtAuthts , jwtAuthdjango} from '../../../../../packages/scripts/Auth/jwt'
 import path from 'path'
 import fs from 'fs/promises'
-import { installDjangoDependencies } from '@/app/scripts/backend/django'
-import createAngularTS from '@/app/scripts/frontend/angularts'
+import { installDjangoDependencies } from '../../../../../packages/scripts/backend/django'
+import createAngularTS from '../../../../../packages/scripts/frontend/angularts'
+import { setupNextAuth } from '../../../../../packages/scripts/Auth/nextAuth'
+import { setupPassport } from '../../../../../packages/scripts/Auth/passport'
+import { setupMongoose } from '../../../../../packages/scripts/orms/mongoSetup'
+import { setupDrizzle } from '../../../../../packages/scripts/orms/drizzleSetup'
+import { setupTailwindCSS } from '../../../../../packages/scripts/ui/tailwindcss'
+import { setupShadcn } from '../../../../../packages/scripts/ui/shadcn'
 import simpleGit from 'simple-git'
-import { setupNextAuth } from '@/app/scripts/Auth/nextAuth'
-import { setupPassport } from '@/app/scripts/Auth/passport'
-import { setupMongoose } from '@/app/scripts/orms/mongoSetup'
-import { setupDrizzle } from '@/app/scripts/orms/drizzleSetup'
+
+
+
+
+const encoder = new TextEncoder();
+
 export async function POST(req: NextRequest) {
     try {
         const config = await req.json()
+        
         console.log(config)
         const projectDir = join(config.projectPath, config.projectName)
-
         await mkdir(projectDir, { recursive: true })
+        const git = simpleGit(projectDir);
+        git.init()
+            .then(() => console.log('Initialized a new Git repository'))
+            .catch(err => console.error('Error:', err));
+
+        if(config.giturl) {
+            await git.remote(['add', 'origin', config.giturl]).then(() => console.log('Remote added')).catch(err => console.error('Error:', err));
+        }
         const emitLog = (message: string) => {
             console.log(`[Emit Logs]: ${message}`);
+            global.logs = global.logs || [];
+            global.logs.push(message);
         };
         
-
         switch(config.frontend) {
             case 'react-ts':
                 await createReactTS(config, projectDir,emitLog)
@@ -37,21 +55,20 @@ export async function POST(req: NextRequest) {
             case 'react':
                 await createReactJS(config, projectDir,emitLog)
                 break
-
+            case 'nextjs':
+                await createNextJS(config, projectDir, emitLog);
+                break;
             case 'django':
                 await installDjangoDependencies(projectDir);
                 break;
             case 'vue':
                 await createVueJS(config, projectDir,emitLog)
+                break
             case 'vue-ts':
-
-                await createVueTS(config, projectDir,emitLog)
-
                 await createVueTS(config, projectDir,emitLog)
                 break
             case 'angularts':
                 await createAngularTS(config, projectDir)
-                
                 break
             default:
                 throw new Error(`Unsupported frontend: ${config.frontend}`)
@@ -68,11 +85,14 @@ export async function POST(req: NextRequest) {
             case 'django':
                 await installDjangoDependencies(projectDir);
                 break
+            case 'nextjs':
+                await createNextJS(config, projectDir, emitLog);
+                break;
             default:
                 throw new Error(`Unsupported backend: ${config.backend}`)
         }
 
-        switch(config.authentication) {
+        switch(config.auth) {
             case 'jwt':
                 await jwtAuthts(config, projectDir,emitLog);
                 break
@@ -138,7 +158,18 @@ Thumbs.db
                  await jwtAuthts(config,projectDir,emitLog);
                 break;
             case 'django':
-                await jwtAuthdjango(config, projectDir);
+                await jwtAuthdjango(config, projectDir,emitLog);
+                break;
+            default:
+                break;
+        }
+        switch(config.ui) {
+            case 'tailwind':
+                await setupTailwindCSS(config, projectDir,emitLog);
+                break;
+            case 'shadcn':
+                await setupTailwindCSS(config, projectDir,emitLog);
+                await setupShadcn(config, projectDir,emitLog);
                 break;
             default:
                 break;
@@ -166,6 +197,30 @@ Thumbs.db
             { status: 500 }
         )
     }
+}
+
+export async function GET() {
+    const stream = new ReadableStream({
+        start(controller) {
+            const interval = setInterval(() => {
+                if (global.logs?.length) {
+                    const log = global.logs.shift();
+                    const data = `data: ${log}\n\n`;
+                    controller.enqueue(encoder.encode(data));
+                }
+            }, 100);
+
+            return () => clearInterval(interval);
+        },
+    });
+
+    return new Response(stream, {
+        headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        },
+    });
 }
 
 async function configureDjangoFiles(projectPath: string) {
